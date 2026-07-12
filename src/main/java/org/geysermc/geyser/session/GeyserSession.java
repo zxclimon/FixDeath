@@ -445,6 +445,10 @@ public class GeyserSession implements GeyserConnection, GeyserCommandSource {
 
     @Setter
     private boolean spawned;
+    @Setter
+    private boolean awaitingInitialHealth;
+    @Setter
+    private boolean pendingInitialRespawn;
     /**
      * Accessed on the initial Java and Bedrock packet processing threads
      */

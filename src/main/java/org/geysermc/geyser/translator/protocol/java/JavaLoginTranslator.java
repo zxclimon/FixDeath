@@ -57,6 +57,8 @@ public class JavaLoginTranslator extends PacketTranslator<ClientboundLoginPacket
     @Override
     public void translate(GeyserSession session, ClientboundLoginPacket packet) {
         SessionPlayerEntity entity = session.getPlayerEntity();
+        session.setAwaitingInitialHealth(true);
+        session.setPendingInitialRespawn(false);
         entity.setEntityId(packet.getEntityId());
 
         PlayerSpawnInfo spawnInfo = packet.getCommonPlayerSpawnInfo();

@@ -33,7 +33,9 @@ import org.geysermc.geyser.entity.type.player.SessionPlayerEntity;
 import org.geysermc.geyser.session.GeyserSession;
 import org.geysermc.geyser.translator.protocol.PacketTranslator;
 import org.geysermc.geyser.translator.protocol.Translator;
+import org.geysermc.mcprotocollib.protocol.data.game.ClientCommand;
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.player.ClientboundSetHealthPacket;
+import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundClientCommandPacket;
 
 import java.util.List;
 
@@ -43,6 +45,12 @@ public class JavaSetHealthTranslator extends PacketTranslator<ClientboundSetHeal
     @Override
     public void translate(GeyserSession session, ClientboundSetHealthPacket packet) {
         SessionPlayerEntity entity = session.getPlayerEntity();
+
+        boolean initialHealth = session.isAwaitingInitialHealth();
+        session.setAwaitingInitialHealth(false);
+        if (initialHealth && packet.getHealth() <= 0f) {
+            session.setPendingInitialRespawn(true);
+        }
 
         float oldHealth = entity.getHealth();
         if (oldHealth <= 0f && Math.ceil(packet.getHealth()) > 0f) {
@@ -75,5 +83,13 @@ public class JavaSetHealthTranslator extends PacketTranslator<ClientboundSetHeal
 
         attributesPacket.setRuntimeEntityId(entity.geyserId());
         session.sendUpstreamPacket(attributesPacket);
+        sendPendingInitialRespawn(session);
+    }
+    static void sendPendingInitialRespawn(GeyserSession session) {
+        if (!session.isPendingInitialRespawn() || !session.isSpawned()) {
+            return;
+        }
+        session.setPendingInitialRespawn(false);
+        session.sendDownstreamGamePacket(new ServerboundClientCommandPacket(ClientCommand.PERFORM_RESPAWN));
     }
 }
