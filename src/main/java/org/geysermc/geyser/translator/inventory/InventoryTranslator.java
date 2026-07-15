@@ -44,6 +44,7 @@ import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.ItemSt
 import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.ItemStackRequestSlotData;
 import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.action.AutoCraftRecipeAction;
 import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.action.ConsumeAction;
+import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.action.CraftRecipeAction;
 import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.action.CraftResultsDeprecatedAction;
 import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.action.DropAction;
 import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.action.ItemStackRequestAction;
@@ -622,6 +623,11 @@ public abstract class InventoryTranslator<Type extends Inventory> {
     }
     
     public ItemStackResponse translateCraftingRequest(GeyserSession session, Type inventory, ItemStackRequest request) {
+        ItemStackResponse response = translateQuickCraftingRequest(session, inventory, request);
+        if (response != null) {
+            return response;
+        }
+
         int resultSize = 0;
         int timesCrafted;
         CraftState craftState = CraftState.START;
@@ -742,6 +748,79 @@ public abstract class InventoryTranslator<Type extends Inventory> {
         plan.execute(false);
         affectedSlots.addAll(plan.getAffectedSlots());
         return acceptRequest(request, makeContainerEntries(session, inventory, affectedSlots));
+    }
+
+    private ItemStackResponse translateQuickCraftingRequest(GeyserSession session, Type inventory, ItemStackRequest request) {
+        int timesCrafted = getQuickCraftCount(request);
+        if (timesCrafted <= 1 || !session.getPlayerInventory().getCursor().isEmpty()) {
+            return null;
+        }
+
+        IntSet affectedSlots = new IntOpenHashSet();
+        ClickPlan plan = new ClickPlan(session, this, inventory);
+        plan.add(Click.LEFT_SHIFT, 0, true);
+        plan.execute(false);
+        affectedSlots.addAll(plan.getAffectedSlots());
+        return acceptRequest(request, makeContainerEntries(session, inventory, affectedSlots));
+    }
+
+    private static int getQuickCraftCount(ItemStackRequest request) {
+        int resultSize = 0;
+        int timesCrafted = 0;
+        long outputCount = 0;
+        CraftState craftState = CraftState.START;
+
+        for (ItemStackRequestAction action : request.getActions()) {
+            switch (action.getType()) {
+                case CRAFT_RECIPE:
+                    if (craftState != CraftState.START) {
+                        return 0;
+                    }
+                    timesCrafted = ((CraftRecipeAction) action).getNumberOfRequestedCrafts();
+                    craftState = CraftState.RECIPE_ID;
+                    break;
+                case CRAFT_RESULTS_DEPRECATED:
+                    CraftResultsDeprecatedAction craftResults = (CraftResultsDeprecatedAction) action;
+                    if (craftState != CraftState.RECIPE_ID || craftResults.getResultItems().length != 1) {
+                        return 0;
+                    }
+                    resultSize = craftResults.getResultItems()[0].getCount();
+                    int count = craftResults.getTimesCrafted();
+                    if (resultSize <= 0 || count <= 0) {
+                        return 0;
+                    }
+                    if (timesCrafted <= 1) {
+                        timesCrafted = count;
+                    }
+                    craftState = CraftState.DEPRECATED;
+                    break;
+                case CONSUME:
+                    if (craftState != CraftState.DEPRECATED && craftState != CraftState.INGREDIENTS) {
+                        return 0;
+                    }
+                    craftState = CraftState.INGREDIENTS;
+                    break;
+                case TAKE:
+                case PLACE:
+                    TransferItemStackRequestAction transfer = (TransferItemStackRequestAction) action;
+                    if ((craftState != CraftState.INGREDIENTS && craftState != CraftState.TRANSFER)
+                            || transfer.getSource().getContainerName().getContainer() != ContainerSlotType.CREATED_OUTPUT
+                            || transfer.getCount() <= 0 || isCursor(transfer.getDestination())) {
+                        return 0;
+                    }
+                    craftState = CraftState.TRANSFER;
+                    outputCount += transfer.getCount();
+                    break;
+                default:
+                    return 0;
+            }
+        }
+
+        if (craftState != CraftState.TRANSFER || timesCrafted <= 1
+                || outputCount != (long) resultSize * timesCrafted) {
+            return 0;
+        }
+        return timesCrafted;
     }
 
     public ItemStackResponse translateAutoCraftingRequest(GeyserSession session, Type inventory, ItemStackRequest request) {
